@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>Captura de Foto | CEVA & Sephora</title>
+  <style>
+    :root { --navy:#051039; --red:#E50914; --gold:#D4AF37; --bg:#08090d; --muted:#a7a7ad; }
+    * { box-sizing: border-box; }
+    body { margin:0; background: radial-gradient(circle at top, #0f1a3a 0%, var(--navy) 45%, var(--bg) 100%); color:#fff; font-family:'Segoe UI', Arial, sans-serif; min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:20px; }
+    h1 { font-size:22px; margin:8px 0 4px; text-align:center; }
+    h1 span { color:var(--red); }
+    p.hint { color:var(--muted); font-size:13px; text-align:center; margin:0 0 18px; }
+    
+    .camera-container { width:100%; max-width:520px; background:#000; border-radius:18px; overflow:hidden; aspect-ratio:4/5; position:relative; border:2px solid #222; box-shadow:0 10px 40px #000a; display:flex; align-items:center; justify-content:center; }
+    #video { width:100%; height:100%; object-fit:cover; transform:scaleX(-1); }
+    #preview { width:100%; height:100%; object-fit:contain; display:none; background:#000; }
+    #msg { position:absolute; bottom:12px; left:12px; right:12px; background:rgba(0,0,0,0.7); padding:10px 14px; border-radius:10px; font-size:13px; text-align:center; display:flex; align-items:center; justify-content:center; gap:8px; }
+    .loader { width:14px; height:14px; border:2px solid #64748b; border-top-color:#fff; border-radius:50%; animation:spin .7s linear infinite; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    
+    .actions { display:flex; gap:10px; margin-top:18px; width:100%; max-width:520px; flex-wrap:wrap; }
+    button { border:0; border-radius:12px; padding:15px 18px; font-weight:800; font-size:15px; cursor:pointer; flex:1; min-width:130px; transition:transform .15s, opacity .15s; display:flex; align-items:center; justify-content:center; gap:6px; }
+    button:active { transform:scale(.97); }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    #btnTirar { background: linear-gradient(135deg, var(--red), #b20710); color:#fff; }
+    #btnRefazer { background:#292b33; color:#fff; }
+    #btnUsar { background: linear-gradient(135deg, #25D366, #128c4a); color:#fff; }
+    .hidden { display:none !important; }
+
+    /* Contador */
+    #overlayContador { display:none; position:fixed; inset:0; z-index:9000; background:rgba(0,0,0,0.85); align-items:center; justify-content:center; flex-direction:column; }
+    #overlayContador.ativo { display:flex; }
+    #numeroContador { font-size:160px; font-weight:900; color:var(--red); text-shadow:0 0 60px rgba(229,9,20,0.8); animation:pulsar 1s ease-out infinite; }
+    @keyframes pulsar { 0% { transform:scale(.8); opacity:.5; } 50% { transform:scale(1.15); opacity:1; } 100% { transform:scale(.8); opacity:.5; } }
+    #textoContador { color:#fff; font-size:20px; letter-spacing:3px; text-transform:uppercase; margin-top:10px; font-weight:bold; }
+    
+    /* Flash */
+    #flash { position:fixed; inset:0; background:#fff; opacity:0; z-index:9999; pointer-events:none; transition:opacity .1s; }
+    #flash.ativo { opacity:1; }
+  </style>
+</head>
+<body>
+  <h1>Espaço <span>Instagramável</span></h1>
+  <p class="hint" id="subTitulo">Prepare-se! A foto será tirada em 5 segundos após você clicar no botão.</p>
+
+  <div class="camera-container">
+    <video id="video" autoplay playsinline muted></video>
+    <img id="preview" alt="Prévia da foto">
+    <div id="msg"><span class="loader"></span>Preparando a câmera...</div>
+  </div>
+
+  <div class="actions">
+    <button id="btnTirar" disabled onclick="iniciarContagem()">📸 TIRAR FOTO (5s)</button>
+    <button id="btnRefazer" class="hidden" onclick="refazer()">🔄 TIRAR NOVAMENTE</button>
+    <button id="btnUsar" class="hidden" onclick="enviarParaSistema()">✅ USAR ESTA FOTO</button>
+  </div>
+
+  <div id="overlayContador">
+    <div id="numeroContador">5</div>
+    <div id="textoContador">Prepare-se...</div>
+  </div>
+  <div id="flash"></div>
+
+  <canvas id="canvas" style="display:none;"></canvas>
+
+<script>
+  const video = document.getElementById('video');
+  const preview = document.getElementById('preview');
+  const canvas = document.getElementById('canvas');
+  const msg = document.getElementById('msg');
+  const btnTirar = document.getElementById('btnTirar');
+  const btnRefazer = document.getElementById('btnRefazer');
+  const btnUsar = document.getElementById('btnUsar');
+  
+  let stream = null;
+  let dataUrl = null;
+
+  function status(texto, carregando = false) {
+    msg.innerHTML = (carregando ? '<span class="loader"></span>' : '') + texto;
+  }
+
+  async function iniciarCamera() {
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Este navegador não disponibiliza câmera. Use Chrome ou Edge em HTTPS.');
+      }
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: 'user' }, width: { ideal: 1280 }, height: { ideal: 1600 } }
+      });
+      video.srcObject = stream;
+      await video.play();
+      btnTirar.disabled = false;
+      status('Câmera pronta! Toque em "Tirar Foto".');
+    } catch (e) {
+      status('Erro: ' + e.message);
+    }
+  }
+
+  function iniciarContagem() {
+    if (!video.videoWidth) return status('Aguarde a câmera carregar...', true);
+    const overlay = document.getElementById('overlayContador');
+    const numero = document.getElementById('numeroContador');
+    overlay.classList.add('ativo');
+    let n = 5;
+    numero.innerText = n;
+    const intervalo = setInterval(() => {
+      n--;
+      if (n > 0) {
+        numero.innerText = n;
+        numero.style.animation = 'none';
+        void numero.offsetWidth;
+        numero.style.animation = 'pulsar 1s ease-out infinite';
+      } else {
+        clearInterval(intervalo);
+        overlay.classList.remove('ativo');
+        capturar();
+      }
+    }, 1000);
+  }
+
+  function capturar() {
+    const maxW = 1000;
+    const scale = Math.min(1, maxW / video.videoWidth);
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    const ctx = canvas.getContext('2d');
+    
+    // Espelha a captura para bater com o vídeo (câmera frontal)
+    ctx.translate(canvas.width, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+
+    // Flash
+    const flash = document.getElementById('flash');
+    flash.classList.add('ativo');
+    setTimeout(() => flash.classList.remove('ativo'), 150);
+
+    // Mostra preview
+    preview.src = dataUrl;
+    preview.style.display = 'block';
+    video.style.display = 'none';
+    btnTirar.classList.add('hidden');
+    btnRefazer.classList.remove('hidden');
+    btnUsar.classList.remove('hidden');
+    status('Confira a foto. Se estiver boa, clique em "Usar esta foto".');
+  }
+
+  function refazer() {
+    dataUrl = null;
+    preview.style.display = 'none';
+    video.style.display = 'block';
+    btnTirar.classList.remove('hidden');
+    btnRefazer.classList.add('hidden');
+    btnUsar.classList.add('hidden');
+    status('Tire uma nova fotografia.');
+  }
+
+  function enviarParaSistema() {
+    if (!dataUrl) return;
+    if (!window.opener) {
+      status('A janela principal não foi encontrada. Feche esta e tente novamente pelo sistema.');
+      return;
+    }
+    status('Enviando foto...', true);
+    // Envia a foto de volta para a janela do Apps Script
+    window.opener.postMessage({ type: 'FOTO_CAPTURADA', dataUrl: dataUrl }, '*');
+    status('Foto enviada! Fechando...');
+    pararCamera();
+    setTimeout(() => window.close(), 800);
+  }
+
+  function pararCamera() {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+  }
+
+  window.addEventListener('beforeunload', pararCamera);
+  iniciarCamera();
+</script>
+</body>
+</html>
